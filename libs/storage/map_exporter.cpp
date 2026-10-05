@@ -18,7 +18,7 @@ std::string g_lastExportError;
 MapExportResult g_lastExportResult = MapExportResult::Ok;
 uint64_t g_lastExportCount = 0;
 
-void SetError(std::string message)
+void SetExportError(std::string message)
 {
   g_lastExportError = std::move(message);
   LOG(LWARNING, ("Map export:", g_lastExportError));
@@ -28,7 +28,7 @@ bool CopySingleFile(std::string const & srcPath, std::string const & destPath)
 {
   if (!base::CopyFileX(srcPath, destPath))
   {
-    SetError("Failed to copy " + srcPath + " to " + destPath);
+    SetExportError("Failed to copy " + srcPath + " to " + destPath);
     return false;
   }
   return true;
@@ -113,7 +113,7 @@ MapExportResult ExportMaps(Storage const & storage, std::vector<CountryId> const
   Platform & platform = GetPlatform();
   if (!platform.IsFileExistsByFullPath(destDir))
   {
-    SetError("Destination directory does not exist: " + destDir);
+    SetExportError("Destination directory does not exist: " + destDir);
     g_lastExportResult = MapExportResult::DestinationError;
     return g_lastExportResult;
   }
@@ -123,7 +123,7 @@ MapExportResult ExportMaps(Storage const & storage, std::vector<CountryId> const
   uint64_t constexpr kExtraSizeBytes = 10 * 1024 * 1024;
   if (platform.GetWritableStorageStatus(totalSize + kExtraSizeBytes) != Platform::TStorageStatus::STORAGE_OK)
   {
-    SetError("Not enough free space for export, need " + strings::to_string(totalSize) + " bytes");
+    SetExportError("Not enough free space for export, need " + strings::to_string(totalSize) + " bytes");
     g_lastExportResult = MapExportResult::DestinationError;
     return g_lastExportResult;
   }

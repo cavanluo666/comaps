@@ -23,7 +23,7 @@ std::string g_lastImportError;
 MapImportResult g_lastImportResult = MapImportResult::Ok;
 uint64_t g_lastImportCount = 0;
 
-void SetError(std::string message)
+void SetImportError(std::string message)
 {
   g_lastImportError = std::move(message);
   LOG(LWARNING, ("Map import:", g_lastImportError));
@@ -103,7 +103,7 @@ MapImportResult ImportMaps(Storage & storage, std::string const & srcDir,
 
   if (!Platform::IsFileExistsByFullPath(srcDir))
   {
-    SetError("Source directory does not exist: " + srcDir);
+    SetImportError("Source directory does not exist: " + srcDir);
     g_lastImportResult = MapImportResult::SourceError;
     return g_lastImportResult;
   }
@@ -128,7 +128,7 @@ MapImportResult ImportMaps(Storage & storage, std::string const & srcDir,
   uint64_t constexpr kExtraSizeBytes = 10 * 1024 * 1024;
   if (platform.GetWritableStorageStatus(totalSize + kExtraSizeBytes) != Platform::TStorageStatus::STORAGE_OK)
   {
-    SetError("Not enough free space to import, need " + strings::to_string(totalSize) + " bytes");
+    SetImportError("Not enough free space to import, need " + strings::to_string(totalSize) + " bytes");
     g_lastImportResult = MapImportResult::DestinationError;
     return g_lastImportResult;
   }
@@ -144,7 +144,7 @@ MapImportResult ImportMaps(Storage & storage, std::string const & srcDir,
       std::string const destPath = base::JoinPath(destDir, map.m_countryId + DATA_FILE_EXTENSION);
       if (!base::CopyFileX(map.m_mapPath, destPath))
       {
-        SetError("Failed to import map file to " + destPath);
+        SetImportError("Failed to import map file to " + destPath);
         return MapImportResult::CopyError;
       }
       copied += map.m_size;
