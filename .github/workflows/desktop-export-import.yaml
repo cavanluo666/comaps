@@ -1,0 +1,94 @@
+name: Build Desktop (with map export/import)
+
+# Build the CoMaps desktop app on a cloud runner and run the export/import unit tests.
+# Triggered manually (workflow_dispatch) or on pushes to branches matching the pattern.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+
+env:
+  SKIP_MAP_DOWNLOAD: true   # don''t download World maps; speeds up the build
+
+jobs:
+  desktop:
+    name: Build desktop + export/import tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install build tools and dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential clang cmake ninja-build \
+            python3 python3-venv \
+            qt6-base-dev qt6-positioning-dev libqt6svg6-dev \
+            libc++-dev libfreetype-dev libglvnd-dev libgl1-mesa-dev \
+            libharfbuzz-dev libicu-dev libsqlite3-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            zlib1g-dev
+
+      # NOTE: do NOT set `submodules: recursive` here — it conflicts with the
+      # manual `git submodule update` below (checkout would register submodules
+      # as empty and the later update skips them). This mirrors the official
+      # android-check.yaml, which relies solely on the manual command.
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Parallel submodules checkout
+        shell: bash
+        run: |
+          set -x
+          echo "--- submodule status (before) ---"
+          git submodule status || true
+          echo "--- .gitmodules URLs ---"
+          grep url .gitmodules || true
+          echo "--- attempt update ---"
+          git submodule update --init --recursive --depth 1 --jobs=$(($(nproc) * 20)) 2>&1 | tail -40
+          echo "--- boost present? ---"
+          ls -d 3party/boost 2>&1 || true
+
+      - name: Configure repository
+        shell: bash
+        run: |
+          chmod +x configure.sh tools/unix/*.sh 2>/dev/null || true
+          bash ./configure.sh
+
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: desktop-export-import
+
+      - name: Build desktop
+        shell: bash
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target desktop -j $(nproc)
+
+      - name: Build and run export/import tests
+        shell: bash
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --target storage_tests -j $(nproc)
+          cd build && ctest -R "MapExporterImporter|MapImporter" --output-on-failure
+
+      - name: Upload desktop binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: CoMaps-desktop
+          path: |
+            build/../omim-build-release/CoMaps
+            omim-build-release/CoMaps
+          if-no-files-found: warn

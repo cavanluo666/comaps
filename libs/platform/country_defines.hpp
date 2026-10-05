@@ -9,6 +9,10 @@ enum class MapFileType : uint8_t
 {
   Map,
   Diff,
+  /// Routing data file (<name>.mwm.routing) kept alongside the corresponding
+  /// <name>.mwm. Required to build routes, so it must travel with the map
+  /// whenever the map is copied or exported.
+  Route,
 
   Count
 };

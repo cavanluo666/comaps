@@ -1,6 +1,8 @@
 #include "qt/update_dialog.hpp"
 
 #include "storage/downloader_search_params.hpp"
+#include "storage/map_exporter.hpp"
+#include "storage/map_importer.hpp"
 #include "storage/storage_defines.hpp"
 
 #include "platform/downloader_defines.hpp"
@@ -13,12 +15,20 @@
 #include <limits>
 
 #include <QtCore/QDateTime>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
+#include <QtCore/QFileInfo>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QtCore/QFutureWatcher>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressBar>
+#include <QtWidgets/QProgressDialog>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QVBoxLayout>
@@ -85,6 +95,7 @@ UpdateDialog::UpdateDialog(QWidget * parent, Framework & framework)
   : QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint)
   , m_framework(framework)
   , m_observerSlotId(0)
+  , m_pProgress(nullptr)
 {
   setWindowModality(Qt::WindowModal);
 
@@ -95,6 +106,12 @@ UpdateDialog::UpdateDialog(QWidget * parent, Framework & framework)
   QPushButton * closeButton = new QPushButton(QObject::tr("Close"), this);
   closeButton->setDefault(true);
   connect(closeButton, &QAbstractButton::clicked, this, &UpdateDialog::OnCloseClick);
+
+  m_pExportAllButton = new QPushButton(QObject::tr("Export all"), this);
+  connect(m_pExportAllButton, &QAbstractButton::clicked, this, &UpdateDialog::OnExportAllClick);
+
+  m_pImportButton = new QPushButton(QObject::tr("Import..."), this);
+  connect(m_pImportButton, &QAbstractButton::clicked, this, &UpdateDialog::OnImportClick);
 
   m_tree = new QTreeWidget(this);
   m_tree->setColumnCount(KNumberOfColumns);
@@ -110,8 +127,12 @@ UpdateDialog::UpdateDialog(QWidget * parent, Framework & framework)
   m_tree->header()->setSectionResizeMode(KColumnIndexPositionInRanking, QHeaderView::ResizeToContents);
 
   connect(m_tree, &QTreeWidget::itemClicked, this, &UpdateDialog::OnItemClick);
+  m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, &UpdateDialog::OnContextMenuRequest);
 
   QHBoxLayout * horizontalLayout = new QHBoxLayout();
+  horizontalLayout->addWidget(m_pExportAllButton);
+  horizontalLayout->addWidget(m_pImportButton);
   horizontalLayout->addStretch();
   horizontalLayout->addWidget(m_pCheckUpdatesLabel);
   horizontalLayout->addWidget(m_pCheckUpdatesButton);
@@ -605,5 +626,186 @@ void UpdateDialog::ShowModal()
     FillTree({} /* filter */, m_fillTreeTimestamp);
 
   exec();
+}
+
+vector<storage::CountryId> UpdateDialog::CollectDownloadedLeaves() const
+{
+  vector<storage::CountryId> result;
+
+  function<void(storage::CountryId const &)> traverse = [&](storage::CountryId const & id)
+  {
+    CountriesVec children;
+    GetStorage().GetChildren(id, children);
+    if (children.empty())
+    {
+      NodeAttrs attrs;
+      GetStorage().GetNodeAttrs(id, attrs);
+      if (attrs.m_status == NodeStatus::OnDisk || attrs.m_status == NodeStatus::OnDiskOutOfDate)
+        result.push_back(id);
+      return;
+    }
+    for (auto const & child : children)
+      traverse(child);
+  };
+
+  traverse(GetStorage().GetRootId());
+  return result;
+}
+
+namespace
+{
+QString FormatResultMessage(storage::MapExportResult r, uint64_t count)
+{
+  switch (r)
+  {
+  case storage::MapExportResult::Ok:
+    return QCoreApplication::translate("UpdateDialog", "Exported %1 map(s).").arg(count);
+  case storage::MapExportResult::NoMaps:
+    return QCoreApplication::translate("UpdateDialog", "Nothing to export: no downloaded maps found.");
+  case storage::MapExportResult::DestinationError:
+    return QCoreApplication::translate("UpdateDialog", "Export failed: cannot write to the destination or not enough free space.");
+  case storage::MapExportResult::CopyError:
+    return QCoreApplication::translate("UpdateDialog", "Export failed while copying files: %1").arg(GetLastExportError().c_str());
+  }
+  return QCoreApplication::translate("UpdateDialog", "Export finished.");
+}
+
+QString FormatImportMessage(storage::MapImportResult r, uint64_t count)
+{
+  switch (r)
+  {
+  case storage::MapImportResult::Ok:
+    return QCoreApplication::translate("UpdateDialog", "Imported %1 map(s). They are available after the list refreshes.").arg(count);
+  case storage::MapImportResult::NoMaps:
+    return QCoreApplication::translate("UpdateDialog", "No maps found in the selected folder.");
+  case storage::MapImportResult::SourceError:
+    return QCoreApplication::translate("UpdateDialog", "Import failed: the selected folder does not exist.");
+  case storage::MapImportResult::DestinationError:
+    return QCoreApplication::translate("UpdateDialog", "Import failed: not enough free space on this device.");
+  case storage::MapImportResult::CopyError:
+    return QCoreApplication::translate("UpdateDialog", "Import failed while copying files: %1").arg(GetLastImportError().c_str());
+  }
+  return QCoreApplication::translate("UpdateDialog", "Import finished.");
+}
+}  // namespace
+
+void UpdateDialog::RunExport(vector<storage::CountryId> const & countryIds)
+{
+  if (countryIds.empty())
+  {
+    QMessageBox::information(this, tr("Export maps"), tr("Nothing to export: no maps selected or downloaded."));
+    return;
+  }
+
+  QString const destDir = QFileDialog::getExistingDirectory(
+      this, tr("Export maps to folder"), QString(), QFileDialog::ShowDirsOnly);
+  if (destDir.isEmpty())
+    return;
+
+  uint64_t const total = GetExportSize(GetStorage(), countryIds);
+
+  m_pProgress = new QProgressDialog(tr("Exporting maps..."), tr("Cancel"), 0,
+                                    total > 0 ? static_cast<int>(total) : 1, this);
+  m_pProgress->setWindowModality(Qt::WindowModal);
+  m_pProgress->setMinimumDuration(0);
+  m_pProgress->setValue(0);
+  m_pProgress->show();
+
+  auto const destStd = destDir.toStdString();
+  auto const ids = countryIds;  // copied for the worker thread
+  auto * watcher = new QFutureWatcher<void>(this);
+  connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher]()
+  {
+    m_pProgress->reset();
+    auto const result = storage::GetLastExportResult();
+    auto const count = storage::GetLastExportCount();
+    QMessageBox::information(this, tr("Export maps"), FormatResultMessage(result, count));
+    watcher->deleteLater();
+    m_pProgress->deleteLater();
+    m_pProgress = nullptr;
+  });
+
+  auto future = QtConcurrent::run([destStd, ids, this]()
+  {
+    storage::ExportMaps(GetStorage(), ids, destStd,
+                        [this](uint64_t done, uint64_t /*total*/)
+                        {
+                          QMetaObject::invokeMethod(m_pProgress, "setValue", Qt::QueuedConnection,
+                                                    Q_ARG(int, static_cast<int>(done)));
+                        });
+  });
+  watcher->setFuture(future);
+}
+
+void UpdateDialog::RunImport(std::string const & srcDir)
+{
+  m_pProgress = new QProgressDialog(tr("Importing maps..."), tr("Cancel"), 0, 0, this);
+  m_pProgress->setWindowModality(Qt::WindowModal);
+  m_pProgress->setMinimumDuration(0);
+  m_pProgress->setAutoReset(false);
+  m_pProgress->show();
+
+  auto const srcStd = srcDir;
+  auto * watcher = new QFutureWatcher<void>(this);
+  connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher]()
+  {
+    m_pProgress->reset();
+    auto const result = storage::GetLastImportResult();
+    uint64_t const imported = (result == storage::MapImportResult::Ok)
+                                  ? storage::GetLastImportCount()
+                                  : 0;
+    QMessageBox::information(this, tr("Import maps"), FormatImportMessage(result, imported));
+    watcher->deleteLater();
+    m_pProgress->deleteLater();
+    m_pProgress = nullptr;
+    RefillTree();  // imported maps must appear in the list
+  });
+
+  auto future = QtConcurrent::run([srcStd, this]()
+  {
+    storage::ImportMaps(GetStorage(), srcStd,
+                        [this](uint64_t done, uint64_t total)
+                        {
+                          QMetaObject::invokeMethod(m_pProgress, "setMaximum", Qt::QueuedConnection,
+                                                    Q_ARG(int, static_cast<int>(total)));
+                          QMetaObject::invokeMethod(m_pProgress, "setValue", Qt::QueuedConnection,
+                                                    Q_ARG(int, static_cast<int>(done)));
+                        });
+  });
+  watcher->setFuture(future);
+}
+
+void UpdateDialog::OnExportAllClick()
+{
+  RunExport(CollectDownloadedLeaves());
+}
+
+void UpdateDialog::OnImportClick()
+{
+  QString const srcDir = QFileDialog::getExistingDirectory(
+      this, tr("Select a folder containing exported maps"), QString(), QFileDialog::ShowDirsOnly);
+  if (srcDir.isEmpty())
+    return;
+  RunImport(srcDir.toStdString());
+}
+
+void UpdateDialog::OnContextMenuRequest(QPoint const & pos)
+{
+  QTreeWidgetItem * item = m_tree->itemAt(pos);
+  if (item == nullptr)
+    return;
+
+  storage::CountryId const countryId = GetCountryIdByTreeItem(item);
+  NodeAttrs attrs;
+  GetStorage().GetNodeAttrs(countryId, attrs);
+  bool const downloaded =
+      attrs.m_status == NodeStatus::OnDisk || attrs.m_status == NodeStatus::OnDiskOutOfDate;
+  if (!downloaded)
+    return;
+
+  QMenu menu(this);
+  QAction * exportAction = menu.addAction(tr("Export this map"));
+  if (QAction * const chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos)); chosen == exportAction)
+    RunExport({countryId});
 }
 }  // namespace qt

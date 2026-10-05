@@ -21,6 +21,7 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QLabel;
 class QPushButton;
+class QProgressDialog;
 
 class Framework;
 
@@ -51,6 +52,9 @@ private slots:
   void OnCloseClick();
   void OnLocaleTextChanged(QString const & text);
   void OnQueryTextChanged(QString const & text);
+  void OnExportAllClick();
+  void OnImportClick();
+  void OnContextMenuRequest(QPoint const & pos);
 
 private:
   // CountryId to its ranking position and matched string (assuming no duplicates).
@@ -74,11 +78,23 @@ private:
   std::vector<QTreeWidgetItem *> GetTreeItemsByCountryId(storage::CountryId const & countryId);
   storage::CountryId GetCountryIdByTreeItem(QTreeWidgetItem *);
 
+  /// Collects ids of all locally downloaded leaf maps (OnDisk / OnDiskOutOfDate).
+  std::vector<storage::CountryId> CollectDownloadedLeaves() const;
+
+  /// Runs |ExportMaps| for |countryIds| on a worker thread and shows a progress dialog.
+  void RunExport(std::vector<storage::CountryId> const & countryIds);
+
+  /// Runs |ImportMaps| from |srcDir| on a worker thread and shows a progress dialog.
+  void RunImport(std::string const & srcDir);
+
   inline storage::Storage & GetStorage() const { return m_framework.GetStorage(); }
 
   QTreeWidget * m_tree;
   QLabel * m_pCheckUpdatesLabel;
   QPushButton * m_pCheckUpdatesButton;
+  QPushButton * m_pExportAllButton;
+  QPushButton * m_pImportButton;
+  QProgressDialog * m_pProgress;
   Framework & m_framework;
   int m_observerSlotId;
 

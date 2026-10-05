@@ -4,6 +4,7 @@
 
 #define DATA_FILE_EXTENSION ".mwm"
 #define DATA_FILE_EXTENSION_TMP ".mwm.tmp"
+#define ROUTING_FILE_EXTENSION ".mwm.routing"
 #define RELATIONS_FILE_EXTENSION_TMP ".rels.tmp"
 #define DIFF_FILE_EXTENSION ".mwmdiff"
 #define DIFF_APPLYING_FILE_EXTENSION ".diff.applying"

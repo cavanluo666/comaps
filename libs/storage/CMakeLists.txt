@@ -34,6 +34,10 @@ set(SRC
   map_files_downloader.hpp
   map_files_downloader_with_ping.cpp
   map_files_downloader_with_ping.hpp
+  map_exporter.cpp
+  map_exporter.hpp
+  map_importer.cpp
+  map_importer.hpp
   queued_country.cpp
   queued_country.hpp
   pinger.cpp

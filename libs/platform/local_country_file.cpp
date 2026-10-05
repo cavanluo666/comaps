@@ -46,6 +46,16 @@ void LocalCountryFile::SyncWithDisk()
       break;
     }
   }
+
+  // The routing file is optional: it always accompanies <name>.mwm, but older or partially
+  // downloaded maps may not have it. It is tracked independently from the Diff/Map above.
+  {
+    auto const ut = base::Underlying(MapFileType::Route);
+    ASSERT_LESS(ut, m_files.size(), ());
+
+    if (platform.GetFileSizeByFullPath(GetPath(MapFileType::Route), size))
+      m_files[ut] = size;
+  }
 }
 
 void LocalCountryFile::DeleteFromDisk(MapFileType type) const
