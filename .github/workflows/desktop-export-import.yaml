@@ -83,7 +83,10 @@ jobs:
           # Use a separate build dir so we don't clobber the Release desktop config.
           cmake . -B build-test -G Ninja -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-test --target storage_tests -j $(nproc)
-          ctest --test-dir build-test -R "MapExporterImporter|MapImporter" --output-on-failure
+          # CoMaps' own test runner (not gtest): --filter is an ECMA regex matched
+          # against "<file>::<test>". Run only the export/import tests.
+          ./build-test/libs/storage/storage_tests/storage_tests \
+            --filter='.*MapExporterImporter.*|.*MapImporter.*'
 
       - name: Upload desktop binary
         uses: actions/upload-artifact@v6

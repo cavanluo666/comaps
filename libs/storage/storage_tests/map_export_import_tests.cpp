@@ -18,20 +18,6 @@ using namespace platform::tests_support;
 
 namespace
 {
-// Builds a directory with <name>.mwm (+ optional <name>.mwm.routing) and returns its path.
-std::string MakeMapDir(std::string const & dirName, std::string const & countryId, bool withRouting)
-{
-  ScopedDir dir(dirName);
-  CountryFile cf(countryId);
-  ScopedFile mapFile(dir, cf, MapFileType::Map);
-  TEST(mapFile.Exists(), ("map file", mapFile.GetFullPath()));
-  if (withRouting)
-  {
-    ScopedFile routingFile(dir, cf, MapFileType::Route);
-    TEST(routingFile.Exists(), ("routing file", routingFile.GetFullPath()));
-  }
-  return dir.GetFullPath();
-}
 }  // namespace
 
 UNIT_TEST(MapExporterImporter_RoutingPairedWithMap)
