@@ -80,15 +80,16 @@ jobs:
           CC: clang
           CXX: clang++
         run: |
-          cmake . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build --target storage_tests -j $(nproc)
-          cd build && ctest -R "MapExporterImporter|MapImporter" --output-on-failure
+          # Use a separate build dir so we don't clobber the Release desktop config.
+          cmake . -B build-test -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-test --target storage_tests -j $(nproc)
+          ctest --test-dir build-test -R "MapExporterImporter|MapImporter" --output-on-failure
 
       - name: Upload desktop binary
         uses: actions/upload-artifact@v6
         with:
           name: CoMaps-desktop
           path: |
-            build/../omim-build-release/CoMaps
             omim-build-release/CoMaps
+            build/desktop/CoMaps
           if-no-files-found: warn
