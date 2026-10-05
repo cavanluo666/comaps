@@ -13,6 +13,7 @@
 #include <vector>
 
 using namespace storage;
+using namespace platform;
 using namespace platform::tests_support;
 
 namespace
